@@ -38,8 +38,12 @@ wheels/
 *~
 
 # Data files (large files)
-data/
+# Only ignore root-level data/ directory, not src/data/
+/data/
 *.zip
+
+# Allow src/data/ Python files to be tracked
+!src/data/*.py
 
 # Model checkpoints
 saved_models/*.pth
