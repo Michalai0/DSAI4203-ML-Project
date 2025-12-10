@@ -5,8 +5,8 @@ All model hyperparameters can be adjusted here
 
 # Data Configuration
 DATA_CONFIG = {
-    # Choose which embedding to use: 'bert' or 'word2vec'
-    'embedding_type': 'bert',
+    # Choose which embedding to use: 'bert', 'word2vec' or 'bert_headlines'
+    'embedding_type': 'bert_headlines',
     # Embedding dimension lookup (used to set model input_dim)
     'embedding_dims': {
         'bert': 768,
@@ -16,6 +16,7 @@ DATA_CONFIG = {
     'embedding_files': {
         'bert': 'bert_embeddings_all.csv',
         'word2vec': 'word2vec_embeddings_all.csv',
+        'bert_headlines': 'headlines_with_bert_embeddings.csv',
     },
     'input_dim': 768,  # Default/fallback dimension
     'num_classes': 42,  # Number of news categories
