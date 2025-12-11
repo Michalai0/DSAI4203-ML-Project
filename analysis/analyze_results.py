@@ -143,6 +143,78 @@ def plot_class_metrics(
     plt.close()
 
 
+def plot_precision_f1_combined(
+    report: Dict[str, Any],
+    out_path: str,
+    top_k: Optional[int] = None,
+):
+    """Plot precision与f1-score同图（左右子图对比），便于对照每个类别。"""
+    if not report:
+        print("No classification report data; skip combined precision/f1 plot.")
+        return
+
+    rows = []
+    for cls, vals in report.items():
+        if cls in ("accuracy", "macro avg", "weighted avg"):
+            continue
+        prec = vals.get("precision")
+        f1 = vals.get("f1-score")
+        if prec is not None and f1 is not None:
+            rows.append((cls, prec, f1))
+
+    if not rows:
+        print("No precision/f1 data found; skip combined plot.")
+        return
+
+    # 按 f1-score 排序，便于观察表现最好的类别
+    rows.sort(key=lambda x: x[2], reverse=True)
+    if top_k is not None:
+        rows = rows[:top_k]
+
+    labels = [r[0] for r in rows]
+    precisions = [r[1] for r in rows]
+    f1_scores = [r[2] for r in rows]
+
+    fig_height = max(6, 0.35 * len(labels) + 2)
+    fig, axes = plt.subplots(1, 2, figsize=(12, fig_height), sharey=True)
+
+    y_pos = np.arange(len(labels))
+
+    axes[0].barh(y_pos, precisions, color="steelblue")
+    axes[0].set_title("Precision by class")
+    axes[0].set_xlabel("Precision")
+    axes[0].set_yticks(y_pos)
+    axes[0].set_yticklabels(labels)
+    axes[0].invert_yaxis()
+    axes[0].grid(axis="x", linestyle="--", alpha=0.5)
+
+    axes[1].barh(y_pos, f1_scores, color="salmon")
+    axes[1].set_title("F1-score by class")
+    axes[1].set_xlabel("F1-score")
+    axes[1].invert_yaxis()
+    axes[1].grid(axis="x", linestyle="--", alpha=0.5)
+
+    for idx in range(len(labels)):
+        axes[0].text(
+            precisions[idx] + 0.005,
+            y_pos[idx],
+            f"{precisions[idx]:.3f}",
+            va="center",
+            ha="left",
+        )
+        axes[1].text(
+            f1_scores[idx] + 0.005,
+            y_pos[idx],
+            f"{f1_scores[idx]:.3f}",
+            va="center",
+            ha="left",
+        )
+
+    plt.tight_layout()
+    plt.savefig(out_path, bbox_inches="tight")
+    plt.close()
+
+
 def main(results_file: Optional[str] = None):
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     analysis_dir = os.path.join(project_root, "analysis")
@@ -187,10 +259,12 @@ def main(results_file: Optional[str] = None):
         cls_prec_path = os.path.join(figures_dir, f"{base_name}_{model_name}_precision_top{top_k}.png")
         cls_rec_path = os.path.join(figures_dir, f"{base_name}_{model_name}_recall_top{top_k}.png")
         cls_f1_path = os.path.join(figures_dir, f"{base_name}_{model_name}_f1_top{top_k}.png")
+        cls_combined_path = os.path.join(figures_dir, f"{base_name}_{model_name}_precision_f1_top{top_k}.png")
 
         plot_class_metrics(report, "precision", cls_prec_path, top_k=top_k)
         plot_class_metrics(report, "recall", cls_rec_path, top_k=top_k)
         plot_class_metrics(report, "f1-score", cls_f1_path, top_k=top_k)
+        plot_precision_f1_combined(report, cls_combined_path, top_k=top_k)
 
     print("Saved figures:")
     print(" -", acc_bar_path)
@@ -200,6 +274,7 @@ def main(results_file: Optional[str] = None):
         print(f" - {base_name}_{model_name}_precision_top{top_k}.png")
         print(f" - {base_name}_{model_name}_recall_top{top_k}.png")
         print(f" - {base_name}_{model_name}_f1_top{top_k}.png")
+        print(f" - {base_name}_{model_name}_precision_f1_top{top_k}.png")
 
 
 if __name__ == "__main__":

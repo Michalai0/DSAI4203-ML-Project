@@ -90,6 +90,35 @@ class CNN(nn.Module):
         return x
 
 
+class CNNEnsemble(nn.Module):
+    """
+    Simple average-fusion over multiple CNN sub-models (logits average).
+    Sub-models can vary kernels/channels to increase diversity.
+    """
+    def __init__(self, input_dim=768, variant_configs=None, num_classes=42):
+        super().__init__()
+        if not variant_configs:
+            variant_configs = [{'num_filters': 128, 'filter_sizes': [3, 4, 5], 'dropout': 0.3}]
+        self.sub_models = nn.ModuleList([
+            CNN(
+                input_dim=input_dim,
+                num_filters=cfg.get('num_filters', 128),
+                filter_sizes=cfg.get('filter_sizes', [3, 4, 5]),
+                num_classes=num_classes,
+                dropout=cfg.get('dropout', 0.3),
+            )
+            for cfg in variant_configs
+        ])
+    
+    def forward(self, x):
+        # Forward each sub-model, sum logits then average
+        logits_sum = None
+        for model in self.sub_models:
+            logits = model(x)
+            logits_sum = logits if logits_sum is None else logits_sum + logits
+        return logits_sum / len(self.sub_models)
+
+
 class TransformerClassifier(nn.Module):
     """
     Transformer classification model
