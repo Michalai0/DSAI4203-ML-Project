@@ -6,7 +6,7 @@ All model hyperparameters can be adjusted here
 # Data Configuration
 DATA_CONFIG = {
     # Choose which embedding to use: 'bert', 'word2vec' or 'bert_headlines'
-    'embedding_type': 'bert_headlines',
+    'embedding_type': 'bert',
     # Embedding dimension lookup (used to set model input_dim)
     'embedding_dims': {
         'bert': 768,
@@ -19,7 +19,17 @@ DATA_CONFIG = {
         'bert_headlines': 'headlines_with_bert_embeddings.csv',
     },
     'input_dim': 768,  # Default/fallback dimension
-    'num_classes': 42,  # Number of news categories
+    'allowed_categories': [
+        'POLITICS',
+        'WELLNESS',
+        'ENTERTAINMENT',
+        'TRAVEL',
+        'STYLE & BEAUTY',
+        'PARENTING',
+    ],
+    # If set to an integer, then each category will retain a maximum of that number of samples (if the number is insufficient, all samples will be retained)
+    'max_samples_per_class': None,
+    'num_classes': 6,  # Number of news categories (updated to match allowed_categories)
     'batch_size': 1024,
     'test_size': 0.2,  # Test set ratio
     'val_size': 0.1,   # Validation set ratio (from training set)
@@ -30,9 +40,9 @@ DATA_CONFIG = {
 MLP_CONFIG = {
     'enabled': True,  # Set to False to skip training this model
     'hidden_dims': [512, 256, 128],  # Hidden layer dimensions
-    'dropout': 0.3,
-    'learning_rate': 0.001,
-    'epochs': 20,
+    'dropout': 0.2,
+    'learning_rate': 0.0003,
+    'epochs': 100,
     'weight_decay': 1e-5,
     'scheduler_step_size': 7,  # Learning rate scheduler step size
     'scheduler_gamma': 0.1  # Learning rate decay factor
@@ -45,7 +55,7 @@ CNN_CONFIG = {
     'filter_sizes': [3, 4, 5],  # Convolution kernel sizes
     'dropout': 0.3,
     'learning_rate': 0.001,
-    'epochs': 20,
+    'epochs': 100,
     'weight_decay': 1e-5,
     'scheduler_step_size': 7,
     'scheduler_gamma': 0.1
@@ -60,7 +70,7 @@ TRANSFORMER_CONFIG = {
     'seq_len': 3,  # Number of tokens to split 768-dim embedding into
     'dropout': 0.3,
     'learning_rate': 0.0005,
-    'epochs': 20,
+    'epochs': 100,
     'weight_decay': 1e-5,
     'scheduler_step_size': 7,
     'scheduler_gamma': 0.1

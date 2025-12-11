@@ -12,9 +12,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from sklearn.metrics import accuracy_score, classification_report
-from sklearn.metrics import f1_score #Ken
 from torch.optim.lr_scheduler import StepLR
-from torch.optim.lr_scheduler import ReduceLROnPlateau #Ken
 from tqdm import tqdm
 
 # Add project root directory to path
@@ -44,11 +42,9 @@ def train_model(
     scheduler_step_size=7,
     scheduler_gamma=0.1,
     device='cuda',
-    #early_stopping_metric='val_acc',
-    early_stopping_metric='val_f1_macro', #Ken
+    early_stopping_metric='val_acc',
     early_stopping_patience=5,
     early_stopping_min_delta=0.0,
-    class_weights=None #Ken
 ):
     """Train model"""
     print(f"\n{'='*60}")
@@ -56,14 +52,11 @@ def train_model(
     print(f"{'='*60}\n")
     
     model = model.to(device)
-    criterion = nn.CrossEntropyLoss(weight=(class_weights.to(device) if class_weights is not None else None)) #Ken
+    criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
-    #scheduler = StepLR(optimizer, step_size=scheduler_step_size, gamma=scheduler_gamma)
-    
-    scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=1) #Ken
+    scheduler = StepLR(optimizer, step_size=scheduler_step_size, gamma=scheduler_gamma) #Ken
     
     is_loss_metric = early_stopping_metric == 'val_loss'
-    use_f1_metric = early_stopping_metric == 'val_f1_macro' #Ken
     best_val_metric = float('inf') if is_loss_metric else 0.0
     best_model_state = None
     patience_counter = 0
@@ -71,7 +64,6 @@ def train_model(
     train_accs = []
     val_losses = []
     val_accs = []
-    val_f1_macro_list=[] #Ken
     
     for epoch in range(num_epochs):
         # Training phase
@@ -92,7 +84,7 @@ def train_model(
             optimizer.step()
             
             train_loss += loss.item()
-            _, predicted = torch.max(outputs, 1) #Ken
+            _, predicted = torch.max(outputs.data, 1)
             train_total += labels.size(0)
             train_correct += (predicted == labels).sum().item()
             
@@ -111,7 +103,6 @@ def train_model(
         val_loss = 0.0
         val_correct = 0
         val_total = 0
-        y_true, y_pred = [], [] #Ken
         
         with torch.no_grad():
             val_pbar = tqdm(val_loader, desc=f'Epoch {epoch+1}/{num_epochs} [Val]')
@@ -123,11 +114,9 @@ def train_model(
                 loss = criterion(outputs, labels)
                 
                 val_loss += loss.item()
-                _, predicted = torch.max(outputs, 1) #Ken
+                _, predicted = torch.max(outputs.data, 1)
                 val_total += labels.size(0)
                 val_correct += (predicted == labels).sum().item()
-                y_true.extend(labels.cpu().numpy()) #Ken
-                y_pred.extend(predicted.cpu().numpy()) #Ken
                 
                 val_pbar.set_postfix({
                     'loss': f'{loss.item():.4f}',
@@ -136,44 +125,33 @@ def train_model(
         
         val_loss /= len(val_loader)
         val_acc = 100 * val_correct / val_total
-        val_f1_macro = f1_score(y_true, y_pred, average='macro') #Ken
         val_losses.append(val_loss)
         val_accs.append(val_acc)
-        val_f1_macro_list.append(float(val_f1_macro)) #Ken
         
         # Learning rate scheduling
-        scheduler.step(val_f1_macro) #Ken
-        #current_lr = scheduler.get_last_lr()[0]
-        current_lr = optimizer.param_groups[0]['lr']
+        scheduler.step()
+        current_lr = scheduler.get_last_lr()[0]
         
         print(f'Epoch {epoch+1}/{num_epochs}:')
         print(f'  Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.2f}%')
         print(f'  Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.2f}%')
         print(f'  LR: {current_lr:.6f}')
         
-        # Early stopping and model checkpoint, Ken
+        # Early stopping and model checkpoint
         if is_loss_metric:
+            improved = (best_val_metric - val_loss) > early_stopping_min_delta
             current_metric = val_loss
-            improved = (best_val_metric - current_metric) > early_stopping_min_delta
-        elif use_f1_metric:
-            current_metric = val_f1_macro          #
-            improved = (current_metric - best_val_metric) > early_stopping_min_delta
         else:
-            current_metric = val_acc / 100.0       
-            improved = (current_metric - best_val_metric) > (early_stopping_min_delta / 100.0)
+            improved = (val_acc - best_val_metric) > early_stopping_min_delta
+            current_metric = val_acc
 
         if improved:
             best_val_metric = current_metric
             best_model_state = model.state_dict().copy()
             patience_counter = 0
-            if is_loss_metric:
-                metric_name, metric_display, suffix = 'loss', val_loss, ''
-            elif use_f1_metric:
-                metric_name, metric_display, suffix = 'f1_macro', val_f1_macro, ''
-            else:
-                metric_name, metric_display, suffix = 'accuracy', val_acc, '%'
-            print(f'  ✓ New best validation {metric_name}: {metric_display:.4f}{suffix}')
-
+            metric_name = 'loss' if is_loss_metric else 'accuracy'
+            metric_display = val_loss if is_loss_metric else val_acc
+            print(f'  ✓ New best validation {metric_name}: {metric_display:.2f}{"%" if not is_loss_metric else ""}')
         else:
             patience_counter += 1
             if patience_counter >= early_stopping_patience:
@@ -193,8 +171,7 @@ def train_model(
         'train_loss': train_losses,
         'train_accuracy': train_accs,
         'val_loss': val_losses,
-        'val_accuracy': val_accs,
-        'val_f1_macro': val_f1_macro_list
+        'val_accuracy': val_accs
     }
     
     return model, history
@@ -217,7 +194,7 @@ def test_model(model, test_loader, label_encoder, model_name, device='cuda'):
             labels = labels.to(device)
             
             outputs = model(embeddings)
-            _, predicted = torch.max(outputs, 1) #Ken
+            _, predicted = torch.max(outputs.data, 1)
             
             all_predictions.extend(predicted.cpu().numpy())
             all_labels.extend(labels.cpu().numpy())
@@ -253,14 +230,6 @@ def main():
     """Main function"""
     # Set device
     print("PyTorch version:", torch.__version__)
-
-    def set_seed(seed=10):
-        import random, numpy as np, torch
-        random.seed(seed); np.random.seed(seed); torch.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
-    set_seed(10)
     
     if TRAINING_CONFIG['device'] == 'cpu':
         device = torch.device('cpu')
@@ -289,8 +258,6 @@ def main():
         random_state=DATA_CONFIG['random_state'],
         data_root=data_root
     )
-
-
     
     # Override num_classes from data if different
     if num_classes != DATA_CONFIG['num_classes']:
@@ -308,7 +275,7 @@ def main():
     # MLP Configuration
     if MLP_CONFIG['enabled']:
         models_config['MLP'] = {
-            'model': MLP(
+            'model_builder': lambda: MLP(
                 input_dim=input_dim,
                 hidden_dims=MLP_CONFIG['hidden_dims'],
                 num_classes=num_classes,
@@ -324,7 +291,7 @@ def main():
     # CNN Configuration
     if CNN_CONFIG['enabled']:
         models_config['CNN'] = {
-            'model': CNN(
+            'model_builder': lambda: CNN(
                 input_dim=input_dim,
                 num_filters=CNN_CONFIG['num_filters'],
                 filter_sizes=CNN_CONFIG['filter_sizes'],
@@ -341,7 +308,7 @@ def main():
     # Transformer Configuration
     if TRANSFORMER_CONFIG['enabled']:
         models_config['Transformer'] = {
-            'model': TransformerClassifier(
+            'model_builder': lambda: TransformerClassifier(
                 input_dim=input_dim,
                 d_model=TRANSFORMER_CONFIG['d_model'],
                 nhead=TRANSFORMER_CONFIG['nhead'],
@@ -367,28 +334,9 @@ def main():
     
     # Train and test all models
     results = {}
-
-    # Weighting Calculation, Ken
-
-    counts = torch.zeros(num_classes, dtype=torch.long)
-    for _, y in train_loader:
-        if isinstance(y, torch.Tensor):
-            counts += torch.bincount(y.cpu(), minlength=num_classes)
-        else:
-            y = torch.as_tensor(y)
-            counts += torch.bincount(y, minlength=num_classes)
-
-    total = counts.sum().item()
-    weights = (total / torch.clamp(counts, min=1)).float()
-    weights = weights / weights.mean()
-
-    class_weights = weights  
-    print("class_weights:", class_weights.tolist())
-
-
     
     for model_name, config in models_config.items():
-        model = config['model']
+        model = config['model_builder']()
         
         # Training
         trained_model, history = train_model(
@@ -402,11 +350,9 @@ def main():
             scheduler_step_size=config['scheduler_step_size'],
             scheduler_gamma=config['scheduler_gamma'],
             device=device,
-            #early_stopping_metric=TRAINING_CONFIG.get('early_stopping_metric', 'val_acc'), #Ken
-            early_stopping_metric=TRAINING_CONFIG.get('early_stopping_metric', 'val_f1_macro'),
+            early_stopping_metric=TRAINING_CONFIG.get('early_stopping_metric', 'val_acc'),
             early_stopping_patience=TRAINING_CONFIG.get('early_stopping_patience', 5),
             early_stopping_min_delta=TRAINING_CONFIG.get('early_stopping_min_delta', 0.0),
-            class_weights=class_weights,
         )
         
         # Save model

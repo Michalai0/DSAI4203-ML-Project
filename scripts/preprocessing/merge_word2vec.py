@@ -47,3 +47,4 @@ output_path = os.path.join(data_dir, "embeddings", "word2vec_embeddings_all.csv"
 final.to_csv(output_path, index=False)
 print(f"Saved as: {output_path}")
 
+
