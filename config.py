@@ -86,6 +86,19 @@ TRAINING_CONFIG = {
     # Early stopping settings
     'early_stopping_metric': 'val_acc',  # 'val_acc' or 'val_loss'
     'early_stopping_patience': 5,
-    'early_stopping_min_delta': 0.0  # Minimum improvement to reset patience
+    'early_stopping_min_delta': 0.0,  # Minimum improvement to reset patience
+    # Optional hyperparameter sweep (cartesian product)
+    # Set enabled=True and fill params with lists to try
+    'sweep': {
+        'enabled': True,
+        'params': {
+            'lr': [0.0003, 0.0005, 0.001],
+            'weight_decay': [1e-5, 1e-6],
+            'epochs': [50, 80],
+            # example：'lr': [0.0003, 0.0005, 0.001],
+            # example：'weight_decay': [1e-5, 1e-6],
+            # example：'epochs': [50, 80],
+        }
+    }
 }
 

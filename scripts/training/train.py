@@ -7,6 +7,8 @@ import os
 import sys
 from datetime import datetime
 
+import itertools
+import copy
 import numpy as np
 import torch
 import torch.nn as nn
@@ -360,6 +362,14 @@ def main():
     if not models_config:
         print("Error: No models enabled in configuration!")
         return
+
+    # Build hyperparameter combinations (cartesian product)
+    sweep_cfg = TRAINING_CONFIG.get('sweep', {})
+    sweep_enabled = sweep_cfg.get('enabled', False) and sweep_cfg.get('params')
+    param_grid = sweep_cfg.get('params', {}) if sweep_enabled else {}
+    param_keys = list(param_grid.keys())
+    param_values = [param_grid[k] for k in param_keys]
+    sweep_combos = list(itertools.product(*param_values)) if sweep_enabled else [()]
     
     # Create model save directory
     saved_models_dir = os.path.join(project_root, TRAINING_CONFIG['saved_models_dir'])
@@ -388,63 +398,107 @@ def main():
 
     
     for model_name, config in models_config.items():
-        model = config['model']
-        
-        # Training
-        trained_model, history = train_model(
-            model_name=model_name,
-            model=model,
-            train_loader=train_loader,
-            val_loader=val_loader,
-            num_epochs=config['epochs'],
-            lr=config['lr'],
-            weight_decay=config['weight_decay'],
-            scheduler_step_size=config['scheduler_step_size'],
-            scheduler_gamma=config['scheduler_gamma'],
-            device=device,
-            #early_stopping_metric=TRAINING_CONFIG.get('early_stopping_metric', 'val_acc'), #Ken
-            early_stopping_metric=TRAINING_CONFIG.get('early_stopping_metric', 'val_f1_macro'),
-            early_stopping_patience=TRAINING_CONFIG.get('early_stopping_patience', 5),
-            early_stopping_min_delta=TRAINING_CONFIG.get('early_stopping_min_delta', 0.0),
-            class_weights=class_weights,
-        )
-        
-        # Save model
-        if TRAINING_CONFIG['save_models']:
-            try:
-                model_path = os.path.join(saved_models_dir, f'{model_name.lower()}_model.pth')
-                torch.save(trained_model.state_dict(), model_path)
-                print(f"\nModel saved to: {model_path}")
-            except Exception as e:
-                print(f"\nWarning: Failed to save model: {e}")
-                print("Training completed but model was not saved.")
-        
-        # Testing
-        test_acc, predictions, true_labels, report_text, report_dict = test_model(
-            trained_model, 
-            test_loader, 
-            label_encoder, 
-            model_name,
-            device=device
-        )
-        
-        results[model_name] = {
-            'test_accuracy': test_acc,
-            'history': history,
-            'predictions': predictions,
-            'true_labels': true_labels,
-            'classification_report_text': report_text,
-            'classification_report': report_dict,
-        }
+        # Iterate sweep combos; if sweep is off, there is only one empty combo
+        for combo in sweep_combos:
+            override_params = dict(zip(param_keys, combo)) if sweep_enabled else {}
+            run_tag = ""
+            if sweep_enabled:
+                tag_parts = [f"{k}={override_params[k]}" for k in param_keys]
+                run_tag = "[" + ",".join(tag_parts) + "]"
+                print(f"\n--- Sweep {run_tag} ---")
+
+            lr = override_params.get('lr', config['lr'])
+            weight_decay = override_params.get('weight_decay', config['weight_decay'])
+            epochs = override_params.get('epochs', config['epochs'])
+            sched_step = override_params.get('scheduler_step_size', config['scheduler_step_size'])
+            sched_gamma = override_params.get('scheduler_gamma', config['scheduler_gamma'])
+
+            # Rebuild model for each run to avoid weight carry-over
+            model = copy.deepcopy(config['model'])
+            
+            # Training
+            trained_model, history = train_model(
+                model_name=model_name,
+                model=model,
+                train_loader=train_loader,
+                val_loader=val_loader,
+                num_epochs=epochs,
+                lr=lr,
+                weight_decay=weight_decay,
+                scheduler_step_size=sched_step,
+                scheduler_gamma=sched_gamma,
+                device=device,
+                #early_stopping_metric=TRAINING_CONFIG.get('early_stopping_metric', 'val_acc'), #Ken
+                early_stopping_metric=TRAINING_CONFIG.get('early_stopping_metric', 'val_f1_macro'),
+                early_stopping_patience=TRAINING_CONFIG.get('early_stopping_patience', 5),
+                early_stopping_min_delta=TRAINING_CONFIG.get('early_stopping_min_delta', 0.0),
+                class_weights=class_weights,
+            )
+            
+            # Save model
+            if TRAINING_CONFIG['save_models']:
+                try:
+                    suffix = f"_{run_tag}" if run_tag else ""
+                    safe_suffix = suffix.replace("[", "").replace("]", "").replace(",", "_").replace("=", "-")
+                    model_path = os.path.join(saved_models_dir, f'{model_name.lower()}_model{safe_suffix}.pth')
+                    torch.save(trained_model.state_dict(), model_path)
+                    print(f"\nModel saved to: {model_path}")
+                except Exception as e:
+                    print(f"\nWarning: Failed to save model: {e}")
+                    print("Training completed but model was not saved.")
+            
+            # Testing
+            test_acc, predictions, true_labels, report_text, report_dict = test_model(
+                trained_model, 
+                test_loader, 
+                label_encoder, 
+                model_name,
+                device=device
+            )
+
+            macro_f1 = float(report_dict.get('macro avg', {}).get('f1-score', 0.0))
+            weighted_f1 = float(report_dict.get('weighted avg', {}).get('f1-score', 0.0))
+            
+            results_key = f"{model_name}{run_tag}"
+            results[results_key] = {
+                'test_accuracy': test_acc,
+                'macro_f1': macro_f1,
+                'weighted_f1': weighted_f1,
+                'run_params': {
+                    'lr': lr,
+                    'weight_decay': weight_decay,
+                    'epochs': epochs,
+                    'scheduler_step_size': sched_step,
+                    'scheduler_gamma': sched_gamma,
+                },
+                'history': history,
+                'predictions': predictions,
+                'true_labels': true_labels,
+                'classification_report_text': report_text,
+                'classification_report': report_dict,
+            }
     
     # Print summary
     print(f"\n{'='*60}")
     print("Model Performance Summary")
     print(f"{'='*60}\n")
-    print(f"{'Model':<15} {'Test Accuracy':<15}")
-    print("-" * 30)
-    for model_name, result in results.items():
-        print(f"{model_name:<15} {result['test_accuracy']:.2f}%")
+    # Sort results by test accuracy descending
+    sorted_items = sorted(results.items(), key=lambda x: x[1].get('test_accuracy', 0), reverse=True)
+
+    print(f"{'Model':<25} {'Test Acc':<12} {'Macro F1':<12} {'lr':<10} {'wd':<10} {'epochs':<8}")
+    print("-" * 80)
+    for model_key, result in sorted_items:
+        macro_f1 = result.get('macro_f1', 0.0) * 100
+        params = result.get('run_params', {})
+        print(f"{model_key:<25} {result['test_accuracy']:.2f}%   {macro_f1:.2f}%   "
+              f"{params.get('lr','-'):<10} {params.get('weight_decay','-'):<10} {params.get('epochs','-'):<8}")
+
+    if sorted_items:
+        best_key, best_res = sorted_items[0]
+        best_params = best_res.get('run_params', {})
+        print(f"\nBest by Test Acc: {best_key} "
+              f"(acc={best_res.get('test_accuracy',0):.2f}%, "
+              f"lr={best_params.get('lr')}, wd={best_params.get('weight_decay')}, epochs={best_params.get('epochs')})")
     
     print(f"\nAll models training completed!")
 
@@ -463,6 +517,8 @@ def main():
         }
         serializable_results[model_name] = {
             'test_accuracy': float(result['test_accuracy']),
+            'macro_f1': float(result.get('macro_f1', 0.0)),
+            'weighted_f1': float(result.get('weighted_f1', 0.0)),
             'history': history_serializable,
             'classification_report_text': result.get('classification_report_text', ''),
             'classification_report': result.get('classification_report', {}),
